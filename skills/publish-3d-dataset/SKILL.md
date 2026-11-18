@@ -19,6 +19,20 @@ Any folder, flat or nested. Per asset, same file stem:
 - `<stem>.jpg` / `.png` - preview, optional
 - `<stem>.json` - optional metadata: `name`, `description`, `tags`, and any other fields (dimensions, source, licence notes). Every field becomes a dataset column.
 
+Recommended sidecar fields, so the dataset is filterable (the viewer Space turns low-cardinality text columns into filters):
+
+| Field | Example |
+|---|---|
+| `id` | unique, stable slug; defaults to the file stem, must not collide |
+| `name`, `description` | display name; one short paragraph |
+| `category`, `subcategory` | `modular-storage` / `closed-totes` |
+| `colour`, `material` | `blue`, `PP` |
+| `state` | `open` / `closed` for models with moving parts |
+| `dimensions_mm` | `{"length": 600, "width": 400, "height": 230}` |
+| `source`, `confidence` | where the dimensions came from, how sure |
+
+Keep values short and consistent (a fixed vocabulary per field), so they work as filters.
+
 If the user has descriptions or specs elsewhere (a spreadsheet, a spec JSON), write the sidecar `.json` files from them rather than inventing text.
 
 ## 3. Build, look, push
@@ -44,4 +58,5 @@ uv run "$S" push  <out> <owner>/<Name> [--public|--private] [--collection "<titl
 
 - `assets/<id>/<id>.<ext>` + preview; `metadata.jsonl` with `file_name` -> preview (imagefolder convention), so the Hub viewer shows a thumbnail grid with the metadata as columns. It does not render 3D; link Sketchfab (skill `mirror-to-sketchfab`) for an in-browser 3D viewer.
 - GLB rows get `triangles`, `vertices` and `bbox_m` (from accessor min/max, ignoring node transforms).
+- The Hub adds `modality:3d` itself when the repo holds 3D files (.glb etc.); the card adds `3d`, `3d-models` and the format tags. Add domain tags with `--tag`.
 - `README.md` card: licence, tags, a table with thumbnails and direct download links.

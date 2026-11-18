@@ -185,7 +185,7 @@ def cmd_build(a):
                 shutil.rmtree(p) if p.is_dir() else p.unlink()
     (out / "assets").mkdir(parents=True, exist_ok=True)
 
-    rows, seen = [], set()
+    rows, seen = [], set()      # ids must be unique: they are the dataset's key
     for asset in assets:
         aid = slug(asset.stem)
         if aid in seen:

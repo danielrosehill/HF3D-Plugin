@@ -1,6 +1,6 @@
 {
   "name": "hf3d",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Publish 3D assets (GLB/glTF/OBJ/STL) to Hugging Face as a browsable dataset, build a 3D viewer Space, optional Sketchfab mirror.",
   "author": {
     "name": "Daniel Rosehill",
