@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D asset viewer</title>
+<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.0.0/model-viewer.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --fg:#e8eaed; --mute:#9aa0aa; --acc:#4f8cff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:20px 24px 8px; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  header p { margin:0; color:var(--mute); }
+  header a { color:var(--acc); }
+  .bar { display:flex; gap:10px; flex-wrap:wrap; padding:12px 24px; position:sticky; top:0; background:var(--bg); z-index:2; border-bottom:1px solid var(--line); }
+  input, select { background:var(--card); color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
+  input { flex:1; min-width:200px; }
+  #count { color:var(--mute); align-self:center; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:14px; padding:18px 24px 40px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; cursor:pointer; transition:border-color .15s; }
+  .card:hover { border-color:var(--acc); }
+  .card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; background:#222; }
+  .card .t { padding:9px 11px; }
+  .card .n { font-weight:600; font-size:14px; }
+  .card .s { color:var(--mute); font-size:12px; }
+  dialog { width:min(1100px, 96vw); height:min(760px, 92vh); padding:0; border:1px solid var(--line); border-radius:14px; background:var(--card); color:var(--fg); }
+  dialog::backdrop { background:rgba(0,0,0,.65); }
+  .dlg { display:grid; grid-template-columns:1fr 340px; height:100%; }
+  model-viewer { width:100%; height:100%; background:radial-gradient(#3a3f4a, #1a1d23); }
+  .side { padding:18px; overflow:auto; border-left:1px solid var(--line); }
+  .side h2 { margin:0 0 10px; font-size:18px; }
+  .side table { width:100%; border-collapse:collapse; font-size:13px; }
+  .side td { border-top:1px solid var(--line); padding:5px 4px; vertical-align:top; word-break:break-word; }
+  .side td:first-child { color:var(--mute); width:38%; }
+  .btns { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+  .btns a, .btns button { background:var(--acc); color:#fff; border:0; border-radius:8px; padding:8px 12px; text-decoration:none; font:inherit; cursor:pointer; }
+  .btns button { background:#333a46; }
+  @media (max-width:800px) { .dlg { grid-template-columns:1fr; grid-template-rows:60% 40%; } .side { border-left:0; border-top:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">3D assets</h1>
+  <p id="desc"></p>
+</header>
+<div class="bar">
+  <input id="q" type="search" placeholder="Search name, code, tags…">
+  <select id="group"></select>
+  <span id="count"></span>
+</div>
+<div class="grid" id="grid"></div>
+
+<dialog id="dlg">
+  <div class="dlg">
+    <model-viewer id="mv" camera-orbit="-50deg 65deg auto" camera-controls auto-rotate shadow-intensity="1" exposure="1" environment-image="neutral" ar touch-action="pan-y"></model-viewer>
+    <div class="side">
+      <h2 id="mname"></h2>
+      <div class="btns">
+        <a id="mdl" download>Download</a>
+        <a id="msf" target="_blank" rel="noopener">Sketchfab</a>
+        <button onclick="document.getElementById('dlg').close()">Close</button>
+      </div>
+      <table id="mmeta"></table>
+    </div>
+  </div>
+</dialog>
+
+<script type="module">
+// config.json is written by `hf3d space`: {title, description, datasets: ["owner/name", ...], group_by}
+const cfg = await (await fetch('config.json')).json();
+document.getElementById('title').textContent = cfg.title;
+document.title = cfg.title;
+const links = cfg.datasets.map(d => `<a href="https://huggingface.co/datasets/${d}" target="_blank">${d}</a>`).join(', ');
+document.getElementById('desc').innerHTML = (cfg.description ? cfg.description + ' · ' : '') + 'Data: ' + links;
+
+const base = d => `https://huggingface.co/datasets/${d}/resolve/main/`;
+const HIDE = new Set(['file_name']);
+let items = [];
+for (const d of cfg.datasets) {
+  const txt = await (await fetch(base(d) + 'metadata.jsonl')).text();
+  for (const line of txt.split('\n')) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    const asset = r.asset || r.glb;
+    if (!asset) continue;
+    items.push({ ...r, _ds: d, _asset: base(d) + asset, _img: r.file_name ? base(d) + r.file_name : '' });
+  }
+}
+
+// group-by options: configured field first, then low-cardinality string fields
+const fields = {};
+for (const it of items) for (const [k, v] of Object.entries(it))
+  if (!k.startsWith('_') && typeof v === 'string' && !HIDE.has(k)) (fields[k] ??= new Set()).add(v);
+const groupable = Object.keys(fields).filter(k => fields[k].size > 1 && fields[k].size <= 24);
+const gsel = document.getElementById('group');
+gsel.innerHTML = '<option value="">All</option>';
+for (const k of groupable) for (const v of [...fields[k]].sort())
+  gsel.insertAdjacentHTML('beforeend', `<option value="${k}=${v}">${k}: ${v}</option>`);
+if (cfg.group_by && !groupable.includes(cfg.group_by)) console.warn('group_by not groupable', cfg.group_by);
+
+const fmt = v => typeof v === 'object' && v !== null
+  ? (Array.isArray(v) ? v.join(', ') : Object.entries(v).map(([k, x]) => `${k} ${x}`).join(' × '))
+  : String(v);
+
+function render() {
+  const q = document.getElementById('q').value.toLowerCase();
+  const [gk, gv] = gsel.value ? gsel.value.split('=') : [];
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  let n = 0;
+  for (const it of items) {
+    if (gk && it[gk] !== gv) continue;
+    if (q && !JSON.stringify(it).toLowerCase().includes(q)) continue;
+    n++;
+    const sub = it.code || it.id || '';
+    const dims = it.outer_mm ? fmt(it.outer_mm) + ' mm' : (it.bbox_m ? it.bbox_m.join(' × ') + ' m' : '');
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = `<img loading="lazy" src="${it._img}" alt="">
+      <div class="t"><div class="n"></div><div class="s">${sub}${dims ? ' · ' + dims : ''}</div></div>`;
+    el.querySelector('.n').textContent = it.name;
+    el.onclick = () => open(it);
+    grid.appendChild(el);
+  }
+  document.getElementById('count').textContent = `${n} of ${items.length}`;
+}
+
+function open(it) {
+  const mv = document.getElementById('mv');
+  if (cfg.camera_orbit) mv.cameraOrbit = cfg.camera_orbit;
+  mv.src = it._asset;
+  mv.poster = it._img;
+  document.getElementById('mname').textContent = it.name;
+  document.getElementById('mdl').href = it._asset;
+  const sf = document.getElementById('msf');
+  sf.style.display = it.sketchfab_url ? '' : 'none';
+  if (it.sketchfab_url) sf.href = it.sketchfab_url;
+  const t = document.getElementById('mmeta');
+  t.innerHTML = '';
+  for (const [k, v] of Object.entries(it)) {
+    if (k.startsWith('_') || HIDE.has(k) || v === null || v === '' || k === 'name') continue;
+    const tr = t.insertRow();
+    tr.insertCell().textContent = k;
+    tr.insertCell().textContent = fmt(v);
+  }
+  document.getElementById('dlg').showModal();
+}
+
+document.getElementById('q').oninput = render;
+gsel.onchange = render;
+const hash = decodeURIComponent(location.hash.slice(1));
+render();
+if (hash) { const it = items.find(i => (i.code || i.id) === hash); if (it) open(it); }
+</script>
+</body>
+</html>

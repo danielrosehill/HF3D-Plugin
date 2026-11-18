@@ -9,6 +9,7 @@ mirrored to Sketchfab.
     uv run hf3d.py push   OUT OWNER/NAME [--public] [--collection SLUG_OR_TITLE]
     uv run hf3d.py check  OWNER/NAME
     uv run hf3d.py sketchfab OUT [--collection UID] [--dry-run]
+    uv run hf3d.py space  OWNER/NAME --dataset OWNER/DS [--hf-collection "3D Assets"] [--public]
 
 SRC layout (flat or nested, any depth):
 
@@ -292,7 +293,7 @@ def cmd_push(a):
     if coll:
         owner = repo.split("/")[0]
         match = None
-        for c in list_collections(owner=owner, limit=200):
+        for c in list_collections(owner=owner, limit=100):
             if coll in (c.slug, c.title):
                 match = c
                 break
@@ -323,6 +324,77 @@ def cmd_check(a):
     v = requests.get("https://datasets-server.huggingface.co/is-valid",
                      params={"dataset": a.repo}, headers=auth, timeout=60).json()
     print(f"  viewer: {v}")
+
+
+# --- viewer space -------------------------------------------------------------------
+
+def cmd_space(a):
+    """Create or update a static HF Space that browses one or more 3D datasets:
+    thumbnail grid, search, group filter, and a <model-viewer> 3D view with
+    metadata, download and Sketchfab links. It reads metadata.jsonl and the
+    assets straight from the dataset repos (HF resolve URLs allow CORS), so the
+    Space never needs rebuilding when the datasets change - only when the
+    dataset list does. Static SDK: free, no hardware, no sleep."""
+    from huggingface_hub import HfApi, add_collection_item, get_collection, list_collections
+    cfg = load_config()
+    api = HfApi()
+    owner = cfg.get("default_owner", "")
+    space = a.space if "/" in a.space else f"{owner}/{a.space}"
+    datasets = list(a.dataset or [])
+    if a.hf_collection:
+        slug_ = a.hf_collection
+        if "/" not in slug_ or not re.search(r"-[0-9a-f]{24}$", slug_):
+            found = [c for c in list_collections(owner=owner, limit=100) if slug_ in (c.title, c.slug)]
+            if not found:
+                sys.exit(f"collection not found: {slug_}")
+            slug_ = found[0].slug
+        coll = get_collection(slug_)
+        datasets += [i.item_id for i in coll.items if i.item_type == "dataset"]
+    datasets = list(dict.fromkeys(datasets))
+    if not datasets:
+        sys.exit("no datasets: pass --dataset and/or --hf-collection")
+    for d in datasets:                     # each must have the hf3d layout
+        files = {s.rfilename for s in api.dataset_info(d).siblings}
+        if "metadata.jsonl" not in files:
+            sys.exit(f"{d}: no metadata.jsonl - publish it with `hf3d build/push` first")
+    public = a.public or (cfg.get("default_public", False) and not a.private)
+    title = a.title or "3D asset viewer"
+
+    tmp = Path(a.workdir or f"/tmp/hf3d-space-{slug(space)}")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    shutil.copy2(Path(__file__).parent / "space_template" / "index.html", tmp / "index.html")
+    (tmp / "config.json").write_text(json.dumps(
+        {"title": title, "description": a.description or "", "datasets": datasets,
+         "group_by": a.group_by, "camera_orbit": a.camera_orbit}, indent=2, ensure_ascii=False) + "\n")
+    short = title if len(title) <= 30 else title[:29] + "…"
+    fm = ["---", f"title: {json.dumps(short, ensure_ascii=False)}", f"emoji: {a.emoji}", "colorFrom: blue", "colorTo: gray",
+          "sdk: static", "pinned: false",
+          f"license: {a.license or cfg.get('default_license', 'cc-by-4.0')}",
+          f"short_description: {json.dumps((a.description or 'Browse and view 3D assets')[:60], ensure_ascii=False)}",
+          "datasets:"] + [f"  - {d}" for d in datasets] + ["---", ""]
+    body = [f"# {title}", "", (a.description or ""), "",
+            "Interactive viewer for 3D assets published as Hugging Face datasets: search, filter, "
+            "and open any model in a 3D view (`<model-viewer>`, AR on mobile) with its metadata "
+            "and a download link. Assets load straight from:", ""]
+    body += [f"- [{d}](https://huggingface.co/datasets/{d})" for d in datasets]
+    body += ["", "Deep link to one asset: append `#<code or id>` to the Space URL.", ""]
+    (tmp / "README.md").write_text("\n".join(fm + body), encoding="utf-8")
+
+    api.create_repo(space, repo_type="space", space_sdk="static", private=not public, exist_ok=True)
+    api.upload_folder(repo_id=space, repo_type="space", folder_path=str(tmp),
+                      commit_message=a.message or "Update viewer")
+    host = space.replace("/", "-").replace("_", "-").replace(".", "-").lower()
+    print(f"space: https://huggingface.co/spaces/{space}")
+    print(f"app:   https://{host}.static.hf.space")
+    coll = a.collection or cfg.get("collection")
+    if coll:
+        for c in list_collections(owner=space.split("/")[0], limit=100):
+            if coll in (c.slug, c.title):
+                add_collection_item(c.slug, item_id=space, item_type="space", exists_ok=True)
+                print(f"collection: https://huggingface.co/collections/{c.slug}")
+                break
 
 
 # --- sketchfab mirror -------------------------------------------------------------
@@ -432,8 +504,20 @@ def main():
     s = sub.add_parser("sketchfab")
     s.add_argument("out"); s.add_argument("--collection"); s.add_argument("--license")
     s.add_argument("--dry-run", action="store_true")
+    v = sub.add_parser("space")
+    v.add_argument("space", help="OWNER/NAME of the Space")
+    v.add_argument("--dataset", action="append", help="dataset id; repeatable")
+    v.add_argument("--hf-collection", help="include every dataset in this HF collection (slug or title)")
+    v.add_argument("--title"); v.add_argument("--description"); v.add_argument("--license")
+    v.add_argument("--group-by")
+    v.add_argument("--camera-orbit", help='model-viewer start view, e.g. "-50deg 65deg auto"'); v.add_argument("--emoji", default="📦")
+    v.add_argument("--collection", help="HF collection to file the Space in")
+    v.add_argument("--message"); v.add_argument("--workdir")
+    g2 = v.add_mutually_exclusive_group()
+    g2.add_argument("--public", action="store_true"); g2.add_argument("--private", action="store_true")
     a = ap.parse_args()
-    {"build": cmd_build, "push": cmd_push, "check": cmd_check, "sketchfab": cmd_sketchfab}[a.cmd](a)
+    {"build": cmd_build, "push": cmd_push, "check": cmd_check, "sketchfab": cmd_sketchfab,
+     "space": cmd_space}[a.cmd](a)
 
 
 if __name__ == "__main__":
