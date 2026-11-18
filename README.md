@@ -21,7 +21,7 @@ uv run scripts/hf3d.py check  you/My-3D-Assets
 uv run scripts/hf3d.py sketchfab ./out --collection <uid>     # needs SKETCHFAB_API_TOKEN
 ```
 
-Example dataset built the same way: [danielrosehill/Modular-Storage-3D-Models](https://huggingface.co/datasets/danielrosehill/Modular-Storage-3D-Models).
+Example of the dataset layout this produces: [danielrosehill/Modular-Storage-3D-Models](https://huggingface.co/datasets/danielrosehill/Modular-Storage-3D-Models).
 
 ## Installation
 
